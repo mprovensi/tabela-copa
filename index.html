@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tabela da Copa — Interativa</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏆</text></svg>">
+<style>
+  :root{
+    --bg:#131110; --gold:#d9b25f; --gold-dim:#8a6d3b; --ink:#b7ab94;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:var(--bg);color:var(--ink);font-family:"Segoe UI",system-ui,-apple-system,sans-serif;min-height:100%}
+  body{display:flex;flex-direction:column;align-items:center}
+  header{
+    width:100%;max-width:1100px;display:flex;align-items:center;justify-content:space-between;
+    gap:12px;padding:18px 20px 6px;flex-wrap:wrap;
+  }
+  .title h1{
+    font-size:clamp(15px,2.6vw,22px);letter-spacing:.28em;font-weight:600;color:var(--gold);
+    text-transform:uppercase;white-space:nowrap;
+  }
+  .title p{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#6d655a;margin-top:3px}
+  .actions{display:flex;gap:8px;align-items:center}
+  .progress{font-size:11px;letter-spacing:.12em;color:#7d7466;margin-right:6px;white-space:nowrap}
+  button{
+    background:transparent;border:1px solid #4a4033;color:#c4b795;font-size:11px;
+    letter-spacing:.14em;text-transform:uppercase;padding:7px 14px;border-radius:20px;cursor:pointer;
+    transition:all .15s;white-space:nowrap;
+  }
+  button:hover{border-color:var(--gold);color:var(--gold)}
+  main{width:100%;max-width:1100px;padding:0 8px}
+  svg{width:100%;height:auto;display:block}
+  footer{
+    width:100%;max-width:1100px;text-align:center;padding:4px 16px 26px;
+    font-size:11.5px;letter-spacing:.06em;color:#6d655a;line-height:1.7;
+  }
+  footer .credit{font-size:10px;color:#4d463d;letter-spacing:.14em;text-transform:uppercase;margin-top:4px}
+  /* mobile: tabela maior, com rolagem lateral centralizada */
+  @media (max-width:720px){
+    main{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    main svg{width:120vw;max-width:none}
+    header{padding:14px 14px 4px}
+    footer{font-size:10.5px}
+  }
+  /* interações SVG */
+  .pk{cursor:pointer}
+  .pk .fring{transition:opacity .15s}
+  .pk:hover .fring{opacity:.95 !important}
+  .act .fring{animation:pulse 2.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.10}50%{opacity:.55}}
+  text{user-select:none;pointer-events:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>Copa do Mundo</h1>
+    <p>Tabela interativa &mdash; mata-mata</p>
+  </div>
+  <div class="actions">
+    <span class="progress" id="prog"></span>
+    <button id="btn-poster" title="Preenche com os resultados do pôster original">Palpite original</button>
+    <button id="btn-reset">Limpar</button>
+  </div>
+</header>
+<main>
+  <svg id="board" viewBox="-905 -1024 1810 2048" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tabela mata-mata da Copa do Mundo">
+    <defs id="defs"></defs>
+    <g id="static"></g>
+    <g id="dyn"></g>
+  </svg>
+</main>
+<footer>
+  Clique em uma seleção para avançá-la à próxima fase &bull; clique novamente para desfazer.<br>
+  Seus resultados ficam salvos automaticamente neste navegador.
+  <div class="credit">Recriação interativa do pôster "es"</div>
+</footer>
+
+<script>
+"use strict";
+/* ============================================================
+   Utilidades geométricas
+============================================================ */
+const RAD = Math.PI/180;
+const px = (r,a) => +(r*Math.cos(a*RAD)).toFixed(2);
+const py = (r,a) => +(-r*Math.sin(a*RAD)).toFixed(2);
+const pt = (r,a) => `${px(r,a)},${py(r,a)}`;
+
+function starPath(cx,cy,ro,ri,n=5,rot=-90){
+  let d="";
+  for(let i=0;i<n*2;i++){
+    const r=i%2===0?ro:ri, a=(rot+i*180/n)*RAD;
+    d+=(i===0?"M":"L")+(cx+r*Math.cos(a)).toFixed(2)+","+(cy+r*Math.sin(a)).toFixed(2);
+  }
+  return d+"Z";
+}
+
+/* ============================================================
+   Bandeiras (desenhadas em caixa -30..30, recortadas em círculo)
+============================================================ */
+const FULL = 'x="-30" y="-30" width="60" height="60"';
+function hz(cols, ws){
+  ws = ws || cols.map(()=>1);
+  const tot = ws.reduce((a,b)=>a+b,0);
+  let y=-30, out="";
+  cols.forEach((c,i)=>{ const h=60*ws[i]/tot; out+=`<rect x="-30" y="${y}" width="60" height="${h+0.5}" fill="${c}"/>`; y+=h; });
+  return out;
+}
+function vt(cols, ws){
+  ws = ws || cols.map(()=>1);
+  const tot = ws.reduce((a,b)=>a+b,0);
+  let x=-30, out="";
+  cols.forEach((c,i)=>{ const w=60*ws[i]/tot; out+=`<rect x="${x}" y="-30" width="${w+0.5}" height="60" fill="${c}"/>`; x+=w; });
+  return out;
+}
+function nordic(bg, arms){ // arms: [[color,width],...] do maior para o menor
+  let out=`<rect ${FULL} fill="${bg}"/>`;
+  arms.forEach(([c,w])=>{
+    out+=`<rect x="${-8-w/2}" y="-30" width="${w}" height="60" fill="${c}"/>`;
+    out+=`<rect x="-30" y="${-w/2}" width="60" height="${w}" fill="${c}"/>`;
+  });
+  return out;
+}
+const sun = (cx,cy,r,c)=>{
+  let out=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c}"/>`;
+  for(let i=0;i<8;i++){const a=i*45*RAD;
+    out+=`<line x1="${cx+ r*1.15*Math.cos(a)}" y1="${cy+r*1.15*Math.sin(a)}" x2="${cx+r*1.8*Math.cos(a)}" y2="${cy+r*1.8*Math.sin(a)}" stroke="${c}" stroke-width="1.6"/>`;}
+  return out;
+};
+
+const TEAMS = {
+  FRA:{n:"França",      c:"#2f4da8", f: vt(["#2b4ea5","#f2f2f2","#d8343e"]) },
+  SWE:{n:"Suécia",      c:"#e9bd3a", f: nordic("#0a5fa8",[["#f6c445",10]]) },
+  PAR:{n:"Paraguai",    c:"#c8414b", f: hz(["#d8343e","#f2f2f2","#2b4ea5"]) +
+      `<circle r="5.5" fill="#f7f7f2" stroke="#3e7a3e" stroke-width="1.6"/><path d="${starPath(0,0,3,1.2)}" fill="#e8b93f"/>` },
+  GER:{n:"Alemanha",    c:"#d8b13c", f: hz(["#2b2b2b","#c8353a","#e9bd3a"]) },
+  MAR:{n:"Marrocos",    c:"#b8323c", f: `<rect ${FULL} fill="#b8323c"/><path d="${starPath(0,0,10,3.9)}" fill="#2f7a45"/>` },
+  NED:{n:"Holanda",     c:"#e07a3a", f: hz(["#c8414b","#f2f2f2","#2b4ea5"]) },
+  CAN:{n:"Canadá",      c:"#d5352e", f: vt(["#d8343e","#f2f2f2","#d8343e"],[15,30,15]) +
+      `<path d="M0,-11 L2.5,-6 L7,-8 L5.5,-3 L10,-1.5 L6,1.5 L8,6.5 L2.5,4.8 L0,10 L-2.5,4.8 L-8,6.5 L-6,1.5 L-10,-1.5 L-5.5,-3 L-7,-8 L-2.5,-6 Z" fill="#d8343e"/>` },
+  RSA:{n:"África do Sul",c:"#2f9e5b", f:
+      `<rect x="-30" y="-30" width="60" height="30" fill="#d8353a"/><rect x="-30" y="0" width="60" height="30" fill="#27408f"/>`+
+      `<rect x="-30" y="-10" width="60" height="20" fill="#f2f2f2"/><polygon points="-30,-30 6,0 -30,30" fill="#f2f2f2"/>`+
+      `<rect x="-30" y="-6.5" width="60" height="13" fill="#2f8f5b"/><polygon points="-30,-25 0,0 -30,25" fill="#2f8f5b"/>`+
+      `<polygon points="-30,-15 -13,0 -30,15" fill="#e9bd3a"/><polygon points="-30,-10.5 -17.5,0 -30,10.5" fill="#2b2b2b"/>` },
+  BRA:{n:"Brasil",      c:"#2f9e5b", f: `<rect ${FULL} fill="#1e9e50"/><polygon points="-23,0 0,-15.5 23,0 0,15.5" fill="#f0c93f"/><circle r="8.5" fill="#27408f"/><path d="M-8,-2 Q0,2 8,-1.6" stroke="#f2f2f2" stroke-width="2" fill="none"/>` },
+  JPN:{n:"Japão",       c:"#d5354a", f: `<rect ${FULL} fill="#f4f2ec"/><circle r="11" fill="#d8343e"/>` },
+  CIV:{n:"C. do Marfim",c:"#e88a2e", f: vt(["#ee8f3a","#f5f5f0","#2f9e5b"]) },
+  NOR:{n:"Noruega",     c:"#e0353f", f: nordic("#d8343e",[["#f2f2f2",13],["#26428b",6.5]]) },
+  MEX:{n:"México",      c:"#2f7a4f", f: vt(["#2f7a4f","#f2f2f2","#c8414b"]) +
+      `<path d="M-4.5,3.5 C-5.5,-.5 -3,-4 0,-4.5 C3.5,-5 5.5,-2.5 4.2,-.5 C6,-1 6,1 4,1.8 C2.8,3.6 .8,4.4 -1.4,4.2 Z" fill="#6e4f2a"/>` },
+  ECU:{n:"Equador",     c:"#eec33f", f: hz(["#f0c93f","#2b4ea5","#c8414b"],[30,15,15]) +
+      `<circle r="6" fill="#cbb27a" stroke="#8a7444" stroke-width="1.4"/><circle r="2.4" fill="#6b5a34"/>` },
+  ENG:{n:"Inglaterra",  c:"#f2f0ea", f: `<rect ${FULL} fill="#f4f2ec"/><rect x="-30" y="-5.5" width="60" height="11" fill="#cf2e3f"/><rect x="-5.5" y="-30" width="11" height="60" fill="#cf2e3f"/>` },
+  COD:{n:"RD Congo",    c:"#3f8fdd", f: `<rect ${FULL} fill="#2f86e0"/><g transform="rotate(45)"><rect x="-45" y="-8" width="90" height="16" fill="#f0d040"/><rect x="-45" y="-5" width="90" height="10" fill="#d8343e"/></g><path d="${starPath(-14,-14,6.5,2.5)}" fill="#f0d040"/>` },
+  ARG:{n:"Argentina",   c:"#86b7e0", f: hz(["#8ab8de","#f5f5f0","#8ab8de"]) + sun(0,0,4.6,"#e8b93f") },
+  CPV:{n:"Cabo Verde",  c:"#3f66c4", f: `<rect ${FULL} fill="#274b96"/><rect x="-30" y="6" width="60" height="4" fill="#f2f2f2"/><rect x="-30" y="10" width="60" height="3.4" fill="#d8343e"/><rect x="-30" y="13.4" width="60" height="4" fill="#f2f2f2"/>`+
+      [0,60,120,180,240,300].map(a=>`<circle cx="${-6+8*Math.cos(a*RAD)}" cy="${9+8*Math.sin(a*RAD)}" r="1.7" fill="#f0d040"/>`).join("") },
+  EGY:{n:"Egito",       c:"#cf3440", f: hz(["#cf3440","#f2f2f2","#2b2b2b"]) +
+      `<path d="M0,-6.5 L4.2,-3 L3.2,5 L0,7.2 L-3.2,5 L-4.2,-3 Z" fill="#c9a23f"/>` },
+  AUS:{n:"Austrália",   c:"#eec33f", f: `<rect ${FULL} fill="#274b96"/>`+
+      `<g><line x1="-30" y1="-30" x2="-2" y2="-4" stroke="#f2f2f2" stroke-width="4"/><line x1="-2" y1="-30" x2="-30" y2="-4" stroke="#f2f2f2" stroke-width="4"/>`+
+      `<rect x="-30" y="-20.5" width="28" height="7" fill="#f2f2f2"/><rect x="-19.5" y="-30" width="7" height="26" fill="#f2f2f2"/>`+
+      `<rect x="-30" y="-19" width="28" height="4" fill="#d8343e"/><rect x="-18" y="-30" width="4" height="26" fill="#d8343e"/></g>`+
+      `<path d="${starPath(-16,14,5.5,2.2,7)}" fill="#f2f2f2"/>`+
+      `<path d="${starPath(14,-16,3,1.2)}" fill="#f2f2f2"/><path d="${starPath(21,-5,2.6,1.05)}" fill="#f2f2f2"/><path d="${starPath(10,-2,2.6,1.05)}" fill="#f2f2f2"/><path d="${starPath(17,8,3,1.2)}" fill="#f2f2f2"/><path d="${starPath(12,17,2.4,1)}" fill="#f2f2f2"/>` },
+  SUI:{n:"Suíça",       c:"#e0353f", f: `<rect ${FULL} fill="#d8343e"/><rect x="-4.6" y="-14.5" width="9.2" height="29" fill="#f4f2ec"/><rect x="-14.5" y="-4.6" width="29" height="9.2" fill="#f4f2ec"/>` },
+  ALG:{n:"Argélia",     c:"#2f9e5b", f: `<rect x="-30" y="-30" width="30" height="60" fill="#1f7a4a"/><rect x="0" y="-30" width="30" height="60" fill="#f2f2f2"/>`+
+      `<path d="M4,-9 A9.5,9.5 0 1,0 4,9 A7.6,7.6 0 1,1 4,-9 Z" fill="#cf3440"/><path d="${starPath(5.5,0,3.4,1.35)}" fill="#cf3440"/>` },
+  COL:{n:"Colômbia",    c:"#eec33f", f: hz(["#f0c93f","#2b4ea5","#c8414b"],[30,15,15]) },
+  GHA:{n:"Gana",        c:"#d94436", f: hz(["#cf3440","#f0c93f","#2f7a4f"]) + `<path d="${starPath(0,0,7.5,2.9)}" fill="#1f1f1f"/>` },
+  BEL:{n:"Bélgica",     c:"#e0353f", f: vt(["#2a2a2a","#f0c93f","#d8343e"]) },
+  SEN:{n:"Senegal",     c:"#2f9e5b", f: vt(["#2f8f5b","#f5e04a","#d8343e"]) + `<path d="${starPath(0,0,6,2.35)}" fill="#2f7a4a"/>` },
+  USA:{n:"EUA",         c:"#d64550", f: hz(["#c8414b","#f2f2f2","#c8414b","#f2f2f2","#c8414b","#f2f2f2","#c8414b"]) +
+      `<rect x="-30" y="-30" width="27" height="22.5" fill="#2b3f7e"/>`+
+      [0,1,2].map(r=>[0,1,2,3].map(cix=>`<circle cx="${-26.5+cix*6.6}" cy="${-25.5+r*7}" r="1.35" fill="#f2f2f2"/>`).join("")).join("") },
+  BIH:{n:"Bósnia",      c:"#f0c93f", f: `<rect ${FULL} fill="#274b96"/><polygon points="-4,-30 30,-30 30,4" fill="#f0c93f"/>`+
+      [[-9,-24],[-1,-16],[7,-8],[15,0],[23,8]].map(p=>`<path d="${starPath(p[0],p[1],3.2,1.3)}" fill="#f2f2f2"/>`).join("") },
+  ESP:{n:"Espanha",     c:"#d0333b", f: hz(["#c03038","#e8b93f","#c03038"],[15,30,15]) +
+      `<rect x="-14" y="-6" width="8" height="11" rx="1.6" fill="#a45a2e" stroke="#7d3f1e" stroke-width="1"/><rect x="-13" y="-8" width="6" height="2.4" fill="#7d3f1e"/>` },
+  AUT:{n:"Áustria",     c:"#e2495a", f: hz(["#cf3440","#f2f2f2","#cf3440"]) },
+  POR:{n:"Portugal",    c:"#2f7a4f", f: `<rect x="-30" y="-30" width="24" height="60" fill="#2f7a4a"/><rect x="-6" y="-30" width="36" height="60" fill="#cf3440"/>`+
+      `<circle cx="-6" cy="0" r="8.5" fill="none" stroke="#e8b93f" stroke-width="2.2"/><rect x="-9.8" y="-5.4" width="7.6" height="10.8" rx="2" fill="#f2f2f2" stroke="#cf3440" stroke-width="1.4"/>` },
+  CRO:{n:"Croácia",     c:"#dd4b4b", f: hz(["#d8343e","#f2f2f2","#2b4ea5"]) +
+      (()=>{let o="";for(let r=0;r<4;r++)for(let c=0;c<4;c++){if((r+c)%2===0)o+=`<rect x="${-7+c*3.5}" y="${-9+r*3.5}" width="3.5" height="3.5" fill="#d8343e"/>`;else o+=`<rect x="${-7+c*3.5}" y="${-9+r*3.5}" width="3.5" height="3.5" fill="#f2f2f2"/>`}return `<rect x="-7.6" y="-9.6" width="14.8" height="14.8" fill="#f2f2f2" rx="1.4"/>`+o})() },
+};
+
+/* ============================================================
+   Estrutura do chaveamento (idêntica ao pôster)
+   8 octantes de 4 seleções; quartas nas diagonais; semis nos
+   eixos horizontais; final no troféu.
+============================================================ */
+/* Brasões coloridos das federações (crests/*.png) — [largura, altura] */
+const CRESTS = {
+  ALG:[96,106],ARG:[73,106],AUS:[105,106],AUT:[80,106],BEL:[62,106],BIH:[103,106],
+  BRA:[73,106],CAN:[98,106],CIV:[97,106],COD:[92,106],COL:[102,106],CPV:[82,106],
+  CRO:[80,106],ECU:[85,106],EGY:[99,106],ENG:[84,106],ESP:[90,106],FRA:[62,106],
+  GER:[85,106],GHA:[83,106],JPN:[78,106],MAR:[96,106],MEX:[82,106],NED:[81,106],
+  NOR:[72,106],PAR:[102,106],POR:[80,106],RSA:[100,106],SEN:[102,106],SUI:[132,97],
+  SWE:[66,106],USA:[75,106]
+};
+/* fator de escala dos brasões */
+const CSC = 0.78;
+for(const k in CRESTS){ CRESTS[k] = [CRESTS[k][0]*CSC, CRESTS[k][1]*CSC]; }
+
+const OCTS = [
+  {id:"A", c:112.5, teams:["SWE","FRA","PAR","GER"]},
+  {id:"B", c:157.5, teams:["MAR","NED","CAN","RSA"]},
+  {id:"C", c: 67.5, teams:["BRA","JPN","CIV","NOR"]},
+  {id:"D", c: 22.5, teams:["MEX","ECU","ENG","COD"]},
+  {id:"H", c:202.5, teams:["AUT","ESP","CRO","POR"]},
+  {id:"G", c:247.5, teams:["SEN","BEL","BIH","USA"]},
+  {id:"F", c:292.5, teams:["SUI","ALG","COL","GHA"]},
+  {id:"E", c:337.5, teams:["ARG","CPV","AUS","EGY"]},
+];
+const R_OUT=610, R_SLOT=512, R_W32=400, R_QS=268, R_QW=190;
+const SF_POS = [{x:-148,y:0,a:180},{x:148,y:0,a:0}];
+const CHAMP = {x:0,y:-192};
+
+const slotAngle = {};
+OCTS.forEach(o=>o.teams.forEach((t,i)=>slotAngle[t]=o.c+16.875-11.25*i));
+
+// Partidas
+const MATCHES = [];
+const byId = {};
+function addMatch(m){ MATCHES.push(m); byId[m.id]=m; return m; }
+
+OCTS.forEach(o=>{
+  addMatch({id:o.id+"1", round:0, srcs:[{team:o.teams[0]},{team:o.teams[1]}], r:R_W32, a:o.c+11.25, next:"R"+o.id});
+  addMatch({id:o.id+"2", round:0, srcs:[{team:o.teams[2]},{team:o.teams[3]}], r:R_W32, a:o.c-11.25, next:"R"+o.id});
+});
+OCTS.forEach(o=>addMatch({id:"R"+o.id, round:1, srcs:[{match:o.id+"1"},{match:o.id+"2"}], r:R_QS, a:o.c, next:null}));
+const QFS = [["A","B",135,"Q0"],["C","D",45,"Q1"],["H","G",225,"Q2"],["F","E",315,"Q3"]];
+QFS.forEach(([x,y,ang,qid])=>{
+  byId["R"+x].next = qid; byId["R"+y].next = qid;
+  addMatch({id:qid, round:2, srcs:[{match:"R"+x},{match:"R"+y}], r:R_QW, a:ang, next: (ang===135||ang===225)?"S0":"S1"});
+});
+addMatch({id:"S0", round:3, srcs:[{match:"Q0"},{match:"Q2"}], r:148, a:180, next:"F"});
+addMatch({id:"S1", round:3, srcs:[{match:"Q1"},{match:"Q3"}], r:148, a:0,   next:"F"});
+addMatch({id:"F",  round:4, srcs:[{match:"S0"},{match:"S1"}], r:192, a:90,  next:null});
+
+// Palpite do pôster original (até as quartas — o pôster para aí)
+const POSTER_PICKS = {
+  A1:"FRA", A2:"PAR", B1:"MAR", B2:"CAN", C1:"BRA", C2:"NOR", D1:"MEX", D2:"ENG",
+  H1:"ESP", H2:"POR", G1:"BEL", G2:"USA", F1:"SUI", F2:"COL", E1:"ARG", E2:"EGY",
+  RA:"FRA", RB:"MAR", RC:"NOR", RD:"ENG", RH:"ESP", RG:"BEL", RF:"SUI", RE:"ARG",
+};
+
+/* ============================================================
+   Estado
+============================================================ */
+const KEY = "copa-bracket-picks-v1";
+let picks = {};
+try{ picks = JSON.parse(localStorage.getItem(KEY)) || {}; }catch(e){ picks = {}; }
+
+function participants(m){ return m.srcs.map(s=>s.team || picks[s.match] || null); }
+function validate(){
+  MATCHES.forEach(m=>{
+    if(picks[m.id]){
+      const ps = participants(m);
+      if(!ps.includes(picks[m.id])) delete picks[m.id];
+    }
+  });
+}
+function save(){ localStorage.setItem(KEY, JSON.stringify(picks)); }
+
+function wonCount(t){ return MATCHES.filter(m=>picks[m.id]===t).length; }
+function eliminated(t){
+  return MATCHES.some(m=>picks[m.id] && picks[m.id]!==t && participants(m).includes(t));
+}
+
+/* ============================================================
+   Camada estática (fundo, brilho, círculo dourado, troféu, raios)
+============================================================ */
+function buildDefs(){
+  let d = `<clipPath id="cc"><circle r="30"/></clipPath>
+  <filter id="gs" color-interpolation-filters="sRGB"><feColorMatrix type="saturate" values="0"/><feComponentTransfer>
+    <feFuncR type="linear" slope="0.42" intercept="0.05"/>
+    <feFuncG type="linear" slope="0.42" intercept="0.05"/>
+    <feFuncB type="linear" slope="0.42" intercept="0.05"/>
+  </feComponentTransfer></filter>
+  <filter id="blur6"><feGaussianBlur stdDeviation="6"/></filter>
+  <filter id="noise" x="-905" y="-1024" width="1810" height="2048" filterUnits="userSpaceOnUse">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+    <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.05 0"/>
+  </filter>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#a5813f" stop-opacity="0.85"/>
+    <stop offset="45%" stop-color="#7a5f2e" stop-opacity="0.42"/>
+    <stop offset="100%" stop-color="#7a5f2e" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vig" cx="50%" cy="50%" r="72%">
+    <stop offset="0%" stop-color="#0c0a09" stop-opacity="0"/>
+    <stop offset="78%" stop-color="#0c0a09" stop-opacity="0"/>
+    <stop offset="100%" stop-color="#0a0908" stop-opacity="0.85"/>
+  </radialGradient>
+  <linearGradient id="goldRing" x1="0" y1="-1" x2="0" y2="1" gradientUnits="objectBoundingBox">
+    <stop offset="0" stop-color="#f0c568"/><stop offset="1" stop-color="#6e5426"/>
+  </linearGradient>`;
+  for(const [id,t] of Object.entries(TEAMS))
+    d += `<g id="fl-${id}" clip-path="url(#cc)">${t.f}</g>`;
+  return d;
+}
+
+function buildStatic(){
+  let s = `<rect x="-905" y="-1024" width="1810" height="2048" fill="#131110"/>
+  <rect x="-905" y="-1024" width="1810" height="2048" filter="url(#noise)"/>
+  <circle r="430" fill="url(#glow)"/>`;
+  s += `<circle r="${R_QS}" fill="none" stroke="url(#goldRing)" stroke-width="7" opacity="0.35" filter="url(#blur6)"/>`;
+  s += `<circle r="${R_QS}" fill="none" stroke="url(#goldRing)" stroke-width="2.6" opacity="0.95"/>`;
+  s += `<rect x="-905" y="-1024" width="1810" height="2048" fill="url(#vig)" pointer-events="none"/>`;
+  return s;
+}
+
+/* ============================================================
+   Renderização dinâmica
+============================================================ */
+const nPos = m => ({x:px(m.r,m.a), y:py(m.r,m.a)});
+
+function srcNode(s){ // posição do nó de origem + seleção (ou null)
+  if(s.team) return {x:px(R_SLOT,slotAngle[s.team]), y:py(R_SLOT,slotAngle[s.team]), r:R_SLOT, a:slotAngle[s.team], team:s.team};
+  const m = byId[s.match];
+  return {x:px(m.r,m.a), y:py(m.r,m.a), r:m.r, a:m.a, team:picks[m.id]||null};
+}
+
+function segStyle(team, m){
+  if(!team) return {c:"#453a2c", w:2.4, o:.9};
+  const w = picks[m.id];
+  if(w===team) return eliminated(team) ? {c:"#4f4941", w:3.4, o:.95} : {c:TEAMS[team].c, w:4.6, o:1};
+  if(w) return {c:"#38322b", w:2.4, o:.9};
+  return {c:"#5c4c39", w:2.6, o:.95};
+}
+
+function elbowPath(sx,sy,sr,sa, m){
+  const er = m.r + (sr-m.r)*0.45;
+  return `M${sx},${sy} L${pt(er,sa)} L${pt(m.r,m.a)}`;
+}
+function curvePath(sx,sy,sa, m){
+  const mid = (sa+m.a)/2 + (Math.abs(sa-m.a)>180 ? 180:0);
+  return `M${sx},${sy} Q${pt(Math.max(m.r,148)+42, mid)} ${pt(m.r,m.a)}`;
+}
+function finalPath(sn){
+  return `M${sn.x},${sn.y} Q${(sn.x*0.35).toFixed(1)},-178 ${CHAMP.x},${CHAMP.y}`;
+}
+
+function flagNode(team, x, y, r, click, pulse){
+  const gray = eliminated(team);
+  const cls = (click?"pk":"") + (pulse?" act":"");
+  const data = click ? `data-m="${click.m}" data-t="${team}"` : "";
+  return `<g transform="translate(${x},${y})" class="${cls}" ${data}>
+    <circle r="${r+2}" fill="#14110f"/>
+    <g ${gray?'filter="url(#gs)"':""}><g transform="scale(${(r/30).toFixed(3)})"><use href="#fl-${team}"/></g></g>
+    <circle r="${r}" fill="none" stroke="rgba(255,255,255,${gray?0.08:0.16})" stroke-width="1.4"/>
+    <circle class="fring" r="${r+6}" fill="none" stroke="#e8c060" stroke-width="2.2" opacity="0"/>
+  </g>`;
+}
+function emptyNode(x,y,r){
+  return `<g transform="translate(${x},${y})">
+    <circle r="${r}" fill="#211d19" stroke="#453e34" stroke-width="1.6"/>
+  </g>`;
+}
+
+function render(){
+  validate();
+  let out = "";
+
+  /* raios externos — visíveis enquanto o time não perde, terminando em ponta */
+  for(const [t,a] of Object.entries(slotAngle)){
+    const hot = !eliminated(t) && wonCount(t)>=1;
+    const bw = hot ? 3.6 : 2.2;                     // meia-largura na base
+    const cs = Math.cos(a*RAD), sn = Math.sin(a*RAD);
+    const bx = px(R_OUT+34,a), by = py(R_OUT+34,a);
+    out += `<polygon points="${(bx+sn*bw).toFixed(1)},${(by+cs*bw).toFixed(1)} ${(bx-sn*bw).toFixed(1)},${(by-cs*bw).toFixed(1)} ${pt(R_OUT+210,a)}"
+      fill="${hot?TEAMS[t].c:"#26221d"}" opacity="${hot?0.92:1}"/>`;
+    // ligação brasão → primeiro círculo
+    const alive1 = !eliminated(t) && wonCount(t)>=1;
+    out += `<line x1="${px(R_OUT-32,a)}" y1="${py(R_OUT-32,a)}" x2="${px(R_SLOT,a)}" y2="${py(R_SLOT,a)}"
+      stroke="${alive1?TEAMS[t].c:"#453a2c"}" stroke-width="${alive1?4.2:2.4}"/>`;
+  }
+
+  /* linhas das partidas */
+  MATCHES.forEach(m=>{
+    m.srcs.forEach(s=>{
+      const sn = srcNode(s);
+      const st = segStyle(sn.team, m);
+      let d;
+      if(m.round<=2)      d = elbowPath(sn.x,sn.y,sn.r,sn.a,m);
+      else if(m.round===3)d = curvePath(sn.x,sn.y,sn.a,m);
+      else                d = finalPath(sn);
+      out += `<path d="${d}" fill="none" stroke="${st.c}" stroke-width="${st.w}" opacity="${st.o}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+  });
+
+  /* troféu (sobre as linhas, sob os nós centrais) */
+  out += `<image href="trophy.png" x="-100" y="-130" width="200" height="280"/>`;
+  if(picks.F){
+    out += `<circle r="${R_QS}" fill="none" stroke="${TEAMS[picks.F].c}" stroke-width="3" opacity="0.35"/>`;
+  }
+
+  /* nós externos: brasão da federação (não clicável) + nome + slot
+     — colorido enquanto o time estiver vencendo, cinza caso contrário */
+  for(const [t,a] of Object.entries(slotAngle)){
+    const rm = MATCHES.find(m=>m.round===0 && m.srcs.some(s=>s.team===t));
+    const gray = !( !eliminated(t) && wonCount(t)>=1 );
+    const [cw,ch] = CRESTS[t];
+    out += `<g transform="translate(${px(R_OUT,a)},${py(R_OUT,a)})" ${gray?'filter="url(#gs)"':""} pointer-events="none">
+      <image href="crests/${t}.png" x="${-cw/2}" y="${-ch/2}" width="${cw}" height="${ch}"/></g>`;
+    const cosA = Math.cos(a*RAD), sinA = Math.sin(a*RAD);
+    const lr = R_OUT + Math.abs(cosA)*(cw/2) + Math.abs(sinA)*(ch/2) + 18;
+    const anchor = Math.abs(cosA)>0.45 ? (cosA>0 ? "start" : "end") : "middle";
+    out += `<text x="${px(lr,a)}" y="${py(lr,a)}" text-anchor="${anchor}" dominant-baseline="middle"
+      font-size="17.5" letter-spacing="1.2" fill="${gray?"#4d463d":"#9a8f7b"}">${TEAMS[t].n.toUpperCase()}</text>`;
+    out += flagNode(t, px(R_SLOT,a), py(R_SLOT,a), 26, {m:rm.id}, !picks[rm.id]);
+  }
+
+  /* nós de vencedores */
+  MATCHES.forEach(m=>{
+    const p = nPos(m);
+    const winner = picks[m.id];
+    const rr = m.round===0?29 : m.round===1?32 : m.round===2?30 : m.round===3?30 : 46;
+    if(m.id==="F"){ // campeão
+      if(winner){
+        out += `<g transform="translate(${CHAMP.x},${CHAMP.y})">
+          <circle r="54" fill="none" stroke="${TEAMS[winner].c}" stroke-width="2" opacity="0.5"/>
+        </g>`;
+        out += flagNode(winner, CHAMP.x, CHAMP.y, rr, null, false);
+        out += `<text x="0" y="196" text-anchor="middle" font-size="21" letter-spacing="7" fill="#e8c060">CAMPEÃO</text>`;
+        out += `<text x="0" y="228" text-anchor="middle" font-size="24" letter-spacing="3" fill="#f0e6d0">${TEAMS[winner].n.toUpperCase()}</text>`;
+      } else {
+        out += `<g transform="translate(${CHAMP.x},${CHAMP.y})">
+          <circle r="34" fill="none" stroke="#5a4c35" stroke-width="1.6" stroke-dasharray="5 6"/>
+          <text y="6" text-anchor="middle" font-size="15" letter-spacing="2" fill="#5a4c35">FINAL</text>
+        </g>`;
+      }
+      return;
+    }
+    if(winner){
+      const nextM = m.next ? byId[m.next] : null;
+      const pulse = nextM && !picks[nextM.id] && participants(nextM).every(Boolean);
+      out += flagNode(winner, p.x, p.y, rr, m.next?{m:m.next}:null, !!pulse);
+    } else {
+      if(m.round===2){ // pontos dourados das quartas como no pôster
+        out += `<circle cx="${p.x}" cy="${p.y}" r="8.5" fill="#a5813f"/>`;
+      } else if(m.round===3){
+        out += `<circle cx="${p.x}" cy="${p.y}" r="8.5" fill="#a5813f"/>`;
+      } else {
+        out += emptyNode(p.x,p.y,rr);
+      }
+    }
+  });
+
+  document.getElementById("dyn").innerHTML = out;
+  const total = MATCHES.length, done = MATCHES.filter(m=>picks[m.id]).length;
+  document.getElementById("prog").textContent = `${done}/${total} definidos`;
+}
+
+/* ============================================================
+   Interação
+============================================================ */
+document.getElementById("board").addEventListener("click", ev=>{
+  const g = ev.target.closest("[data-m]");
+  if(!g) return;
+  const mid = g.getAttribute("data-m"), t = g.getAttribute("data-t");
+  const m = byId[mid];
+  if(!m || !participants(m).includes(t)) return;
+  if(picks[mid]===t) delete picks[mid]; else picks[mid]=t;
+  validate(); save(); render();
+});
+document.getElementById("btn-reset").addEventListener("click", ()=>{
+  if(confirm("Limpar todos os resultados?")){ picks={}; save(); render(); }
+});
+document.getElementById("btn-poster").addEventListener("click", ()=>{
+  picks = Object.assign({}, POSTER_PICKS); save(); render();
+});
+
+document.getElementById("defs").innerHTML = buildDefs();
+document.getElementById("static").innerHTML = buildStatic();
+render();
+
+/* no mobile a tabela é mais larga que a tela: centraliza a rolagem */
+const mainEl = document.querySelector("main");
+function centerScroll(){
+  if(mainEl.scrollWidth > mainEl.clientWidth)
+    mainEl.scrollLeft = (mainEl.scrollWidth - mainEl.clientWidth)/2;
+}
+centerScroll();
+window.addEventListener("resize", centerScroll);
+</script>
+</body>
+</html>
